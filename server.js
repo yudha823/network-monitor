@@ -2,32 +2,40 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const ping = require("ping");
+const cors = require("cors");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+
+// aktifkan CORS untuk semua origin atau spesifik Netlify
+app.use(cors({
+  origin: [
+    "https://dainty-seahorse-32a592.netlify.app", // domain frontend kamu di Netlify
+    "http://localhost:5173", // opsional untuk testing lokal (vite/react)
+  ],
+  methods: ["GET", "POST"],
+  credentials: true
+}));
+
+// buat socket.io server dengan cors juga
+const io = new Server(server, {
+  cors: {
+    origin: [
+      "https://dainty-seahorse-32a592.netlify.app",
+      "http://localhost:5173"
+    ],
+    methods: ["GET", "POST"]
+  }
+});
 
 const PORT = process.env.PORT || 3000;
 
 // daftar target yang akan dipantau
 const targets = ["8.8.8.8", "google.com", "cloudflare.com"];
 
-// simpan hasil ping terakhir
-let latestBatch = [];
-
-// endpoint root untuk tes backend
-app.get("/", (req, res) => {
-  res.send("Backend is running 🚀 Use /api/targets or /api/status for data");
-});
-
-// endpoint API (buat fallback frontend)
+// endpoint API
 app.get("/api/targets", (req, res) => {
   res.json({ targets });
-});
-
-// endpoint API untuk status terakhir
-app.get("/api/status", (req, res) => {
-  res.json({ status: latestBatch });
 });
 
 // ping setiap 5 detik
@@ -51,20 +59,19 @@ setInterval(async () => {
       });
     }
   }
-
-  // simpan batch terbaru
-  latestBatch = batch;
-
-  // broadcast ke semua client via socket.io
   io.emit("ping-batch", batch);
 }, 5000);
 
 // kirim daftar target saat client connect
 io.on("connection", (socket) => {
+  console.log("Client connected");
   socket.emit("targets", targets);
+
+  socket.on("disconnect", () => {
+    console.log("Client disconnected");
+  });
 });
 
-// mulai server
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
