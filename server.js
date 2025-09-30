@@ -1,59 +1,53 @@
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
-const cors = require("cors");
 const ping = require("ping");
 
 const app = express();
-app.use(cors());
-
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "*", // boleh diakses dari Netlify
-    methods: ["GET", "POST"]
-  }
+    origin: "*", // biar bisa diakses dari frontend (Netlify, Postman, dll)
+  },
 });
 
-// Daftar target
+// daftar target IP/host
 const targets = ["8.8.8.8", "google.com", "cloudflare.com"];
 
-// API untuk ambil daftar target
+// API endpoint untuk cek daftar target
 app.get("/api/targets", (req, res) => {
   res.json({ targets });
 });
 
-// Socket.io connection
+// interval ping 5 detik
+setInterval(() => {
+  targets.forEach(async (target) => {
+    try {
+      const result = await ping.promise.probe(target);
+      io.emit("pingResult", {
+        host: target,
+        alive: result.alive,
+        time: result.time,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      io.emit("pingResult", {
+        host: target,
+        alive: false,
+        time: null,
+        error: error.message,
+        timestamp: Date.now(),
+      });
+    }
+  });
+}, 5000);
+
+// socket.io untuk client yang connect
 io.on("connection", (socket) => {
   console.log("Client connected");
   socket.emit("targets", targets);
 });
 
-// Fungsi ping berkala
-setInterval(async () => {
-  const batch = [];
-  for (const target of targets) {
-    try {
-      const res = await ping.promise.probe(target, { timeout: 2 });
-      batch.push({
-        target,
-        alive: res.alive,
-        time: res.time === "unknown" ? null : parseFloat(res.time),
-        timestamp: Date.now()
-      });
-    } catch (err) {
-      batch.push({
-        target,
-        alive: false,
-        time: null,
-        timestamp: Date.now()
-      });
-    }
-  }
-  io.emit("ping-batch", batch); // broadcast ke semua client
-}, 5000); // setiap 5 detik
-
-// Start server
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
