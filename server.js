@@ -1,77 +1,84 @@
+// server.js
 const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
-const ping = require("ping");
 const cors = require("cors");
+const axios = require("axios");
 
 const app = express();
-const server = http.createServer(app);
-
-// aktifkan CORS untuk semua origin atau spesifik Netlify
-app.use(cors({
-  origin: [
-    "https://dainty-seahorse-32a592.netlify.app", // domain frontend kamu di Netlify
-    "http://localhost:5173", // opsional untuk testing lokal (vite/react)
-  ],
-  methods: ["GET", "POST"],
-  credentials: true
-}));
-
-// buat socket.io server dengan cors juga
-const io = new Server(server, {
-  cors: {
-    origin: [
-      "https://dainty-seahorse-32a592.netlify.app",
-      "http://localhost:5173"
-    ],
-    methods: ["GET", "POST"]
-  }
-});
+app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
-// daftar target yang akan dipantau
-const targets = ["8.8.8.8", "google.com", "cloudflare.com"];
+// List target yang dipantau
+const targets = ["google.com", "cloudflare.com", "bing.com", "yahoo.com"];
 
-// endpoint API
-app.get("/api/targets", (req, res) => {
-  res.json({ targets });
+// Penyimpanan hasil ping
+let results = {};
+
+// Inisialisasi data kosong
+targets.forEach(t => {
+  results[t] = [];
 });
 
-// ping setiap 5 detik
+// Fungsi untuk melakukan "ping" berbasis HTTP request
+async function httpPing(target) {
+  try {
+    const start = Date.now();
+    // Coba request HTTPS
+    await axios.get("https://" + target, { timeout: 3000 });
+    const end = Date.now();
+
+    return {
+      target,
+      alive: true,
+      time: end - start,
+      timestamp: Date.now()
+    };
+  } catch (err) {
+    return {
+      target,
+      alive: false,
+      time: null,
+      timestamp: Date.now()
+    };
+  }
+}
+
+// Looping ping tiap 5 detik
 setInterval(async () => {
-  const batch = [];
   for (const target of targets) {
-    try {
-      const res = await ping.promise.probe(target);
-      batch.push({
-        target,
-        alive: res.alive,
-        time: res.alive ? res.time : null,
-        timestamp: Date.now()
-      });
-    } catch (err) {
-      batch.push({
-        target,
-        alive: false,
-        time: null,
-        timestamp: Date.now()
-      });
+    const result = await httpPing(target);
+    results[target].push(result);
+
+    // Batasi hanya simpan 200 data terakhir
+    if (results[target].length > 200) {
+      results[target].shift();
     }
   }
-  io.emit("ping-batch", batch);
 }, 5000);
 
-// kirim daftar target saat client connect
-io.on("connection", (socket) => {
-  console.log("Client connected");
-  socket.emit("targets", targets);
-
-  socket.on("disconnect", () => {
-    console.log("Client disconnected");
-  });
+// API untuk ambil data ping
+app.get("/api/ping", (req, res) => {
+  const target = req.query.target;
+  if (!target || !results[target]) {
+    return res.status(400).json({ error: "Target tidak valid" });
+  }
+  res.json(results[target]);
 });
 
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+// API untuk ambil status singkat semua target
+app.get("/api/status", (req, res) => {
+  const status = targets.map(t => {
+    const last = results[t][results[t].length - 1];
+    return {
+      target: t,
+      last: last ? new Date(last.timestamp).toLocaleTimeString() : "-",
+      alive: last ? (last.alive ? "Up" : "Down") : "-",
+      latency: last && last.time !== null ? last.time : "-"
+    };
+  });
+  res.json(status);
+});
+
+app.listen(PORT, () => {
+  console.log(`Server berjalan di port ${PORT}`);
 });
