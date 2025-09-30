@@ -12,9 +12,22 @@ const PORT = process.env.PORT || 3000;
 // daftar target yang akan dipantau
 const targets = ["8.8.8.8", "google.com", "cloudflare.com"];
 
-// endpoint API (buat fallback)
+// simpan hasil ping terakhir
+let latestBatch = [];
+
+// endpoint root untuk tes backend
+app.get("/", (req, res) => {
+  res.send("Backend is running 🚀 Use /api/targets or /api/status for data");
+});
+
+// endpoint API (buat fallback frontend)
 app.get("/api/targets", (req, res) => {
   res.json({ targets });
+});
+
+// endpoint API untuk status terakhir
+app.get("/api/status", (req, res) => {
+  res.json({ status: latestBatch });
 });
 
 // ping setiap 5 detik
@@ -38,6 +51,11 @@ setInterval(async () => {
       });
     }
   }
+
+  // simpan batch terbaru
+  latestBatch = batch;
+
+  // broadcast ke semua client via socket.io
   io.emit("ping-batch", batch);
 }, 5000);
 
@@ -46,6 +64,7 @@ io.on("connection", (socket) => {
   socket.emit("targets", targets);
 });
 
+// mulai server
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
